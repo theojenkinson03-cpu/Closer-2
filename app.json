@@ -1,0 +1,82 @@
+{
+  "expo": {
+    "name": "CLOSER",
+    "slug": "closer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "closer",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B1B2B",
+    "primaryColor": "#E5484D",
+    "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "game.closer.app",
+      "buildNumber": "1",
+      "requireFullScreen": true,
+      "infoPlist": {
+        "CFBundleDisplayName": "CLOSER",
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIViewControllerBasedStatusBarAppearance": false
+      }
+    },
+    "android": {
+      "package": "game.closer.app",
+      "versionCode": 1,
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#0B1B2B"
+      },
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B1B2B",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0B1B2B"
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#E5484D",
+          "defaultChannel": "rank-drop"
+        }
+      ],
+      "expo-updates"
+    ],
+    "extra": {
+      "privacyPolicyUrl": "https://closer.game/privacy",
+      "termsUrl": "https://closer.game/terms",
+      "supportEmail": "support@closer.game"
+    }
+  }
+}
