@@ -185,4 +185,68 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   totalFill: { height: "100%", backgroundColor: colors.accent },
+  field: { gap: space.sm },
+  fieldHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  fieldTrack: {
+    height: 10,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
+    justifyContent: "center",
+  },
+  fieldFill: {
+    position: "absolute",
+    left: 0,
+    height: "100%",
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    opacity: 0.45,
+  },
+  fieldMarker: {
+    position: "absolute",
+    width: 3,
+    height: 18,
+    marginLeft: -1.5,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+  },
 });
+
+export interface FieldComparisonProps {
+  /** 0 - 1 share of the field this answer beat. */
+  readonly beatenShare: number;
+  readonly medianScore: number;
+  readonly score: number;
+}
+
+/**
+ * How one answer sat against the field.
+ *
+ * The bar is the field, ordered worst to best; the marker is where the player
+ * landed in it. Showing the median alongside stops a high percentage from
+ * reading as a high score, or the reverse - on an easy question you can beat
+ * very few people and still have done well.
+ */
+export function FieldComparison({ beatenShare, medianScore, score }: FieldComparisonProps) {
+  const share = Math.max(0, Math.min(1, beatenShare));
+  const percent = Math.round(share * 100);
+  const beatMedian = score >= medianScore;
+
+  return (
+    <View style={styles.field}>
+      <View style={styles.fieldHead}>
+        <Text variant="caption" tone="faint" uppercase>
+          {percent === 0 ? "Behind the field" : `Beat ${percent}% of the field`}
+        </Text>
+        <Text variant="caption" tone={beatMedian ? "positive" : "muted"}>
+          {`median ${formatScore(medianScore)}`}
+        </Text>
+      </View>
+      <View style={styles.fieldTrack}>
+        <View style={[styles.fieldFill, { width: `${share * 100}%` }]} />
+        <View style={[styles.fieldMarker, { left: `${share * 100}%` }]} />
+      </View>
+    </View>
+  );
+}

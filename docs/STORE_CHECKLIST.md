@@ -32,13 +32,23 @@ present in this repository and verified.
 - **Notification permission flow** - requested at the moment it makes sense
   (after a set is submitted) rather than on first launch, and re-offerable from
   the profile screen.
-- **Content** - 77 questions, 11 days of unique content, every answer verified
+- **Content** - 233 questions, 33 days of unique content, every answer verified
   inside its own range by a test, every question carrying a source and a
   `verifiedAt` date. Repeat protection cycles the whole bank before anything
-  reappears, including across the cycle seam.
+  reappears, and a six-day guard band either side of each cycle seam lifts that
+  to a guarantee no question returns inside a week.
+- **Onboarding** - a first run that teaches the mechanic on a real slider and a
+  real scoring pass, then the six bands and the expectation-based ladder.
+  Versioned, so a later change to what it teaches can show it again; replayable
+  from the profile screen.
+- **Something to do after the day is done** - an unranked archive of every
+  previously ranked set, enforced past-days-only and rank-inert in the service
+  layer.
 - **Accessibility** - the slider exposes an adjustable role with increment and
-  decrement actions, the rank-drop cinematic honours reduced motion, and every
-  interactive element has a role and a label.
+  decrement actions plus full keyboard control, the rank-drop cinematic honours
+  reduced motion, and every interactive element has a role and a label.
+- **CI** - `.github/workflows/ci.yml` gates typecheck and tests on every pull
+  request, and proves the committed icons still reproduce from their generator.
 
 ## Needed before submission
 
@@ -76,6 +86,7 @@ the repository alone.
 - **No friends graph.** `RankResult.friendsPosition` is seeded, and the share
   card has no deep link back into the app yet - which is the acquisition loop
   the format depends on.
-- **Content runway.** 11 days is enough to launch and not enough to retain.
-  Sustaining a year needs roughly 2,500 questions, which is an editorial
-  pipeline, not a code change.
+- **Content runway.** 33 days clears a launch and a first month. Sustaining a
+  year needs roughly 2,500 questions, which is an editorial pipeline rather than
+  a code change - though the archive now absorbs some of that pressure, since a
+  returning player has somewhere to go besides a repeat.

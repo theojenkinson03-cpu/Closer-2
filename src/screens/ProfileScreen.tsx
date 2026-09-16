@@ -20,12 +20,17 @@ import { formatNumber, formatRp, initialsFor, pluralise } from "../core/formatti
 import { TIERS, tierForRp } from "../core/ranks";
 import { colors, radius, space } from "../core/tokens";
 import { DEMO_DATA } from "../services/config";
+import { setPreferences } from "../services/preferences";
 import { getPermissionState, notificationsAvailable, requestPermission, scheduleRankDrop } from "../services/notifications";
 import type { PermissionState } from "../services/notifications";
 import { useDailyState } from "../state/useDailyState";
 import { useSession } from "../state/useSession";
 
-export function ProfileScreen() {
+export function ProfileScreen({
+  onReplayOnboarding,
+}: {
+  readonly onReplayOnboarding: () => void;
+}) {
   const { session, rename } = useSession();
   const { rankState, dateKey } = useDailyState();
   const [name, setName] = useState(session?.displayName ?? "");
@@ -102,6 +107,18 @@ export function ProfileScreen() {
         {permission === "granted" || !notificationsAvailable() ? null : (
           <Button label="Enable reminders" variant="secondary" onPress={() => void enableReminders()} />
         )}
+      </Card>
+
+      <Card title="How to play" style={styles.card}>
+        <Text tone="muted">
+          A refresher on the bands, the ladder and why ranked points move on expectation rather than
+          on your raw score.
+        </Text>
+        <Button
+          label="Replay the walkthrough"
+          variant="secondary"
+          onPress={() => void setPreferences({ onboardingSeen: 0 }).then(onReplayOnboarding)}
+        />
       </Card>
 
       <Card title="The ladder" style={styles.card}>

@@ -18,7 +18,7 @@ turns a single morning habit into two daily touchpoints.
 ```bash
 npm install
 npm start          # Expo dev server; press i, a, or w
-npm test           # 137 unit tests, no framework, ~50ms
+npm test           # 164 unit tests, no framework, ~100ms
 npm run typecheck  # tsc --noEmit, strict
 npm run assets     # regenerate the app icons from tools/generate-assets.mjs
 ```
@@ -50,6 +50,9 @@ stable). Without that normalisation an expanding player base quietly inflates
 everyone's rating. Promotion grants a one-day demotion shield, which removes the
 promote/demote flicker that makes ranked systems feel arbitrary.
 
+The question bank holds 233 sourced, date-stamped questions: 33 days of unique
+content, cycling so nothing returns inside a week even across a cycle seam.
+
 **`src/services` - the backend seam.** Every service is an async function with
 the signature a real endpoint would have, and `DEMO_DATA = true` in
 `config.ts` marks the whole folder as the thing to replace. Three rules a
@@ -74,16 +77,39 @@ server would not recognise.
 The tier badges are computed SVG geometry rather than shipped images - eight
 silhouettes that escalate from a plain gem through laurels and wings to a crown,
 all polar maths, so they are resolution-independent and animate without swapping
-assets. The slider is PanResponder: one finger, one axis, no competing gestures,
-no native module. Because a 390px track cannot resolve one metre out of five
-thousand, the drag gets you close and nudge buttons close the last step.
+assets. Below list size they drop their ornaments rather than rendering them as
+fuzz.
+
+The slider is PanResponder: one finger, one axis, no competing gestures, no
+native module. A 390px track cannot resolve one metre out of five thousand, so
+precision comes from the player rather than the hardware: drag away from the
+track to slow travel to a fifth of its speed, nudge a single step with the
+buttons, or use the arrow keys (shift for ten, Home and End for the bounds).
+
+New players are taught by doing rather than told. The first run puts a real
+slider on a question that can be *reasoned* out rather than recalled - how many
+minutes are in a week - scored by the real engine, then explains the six bands
+and why ranked points move on expectation rather than raw score. It is the one
+thing that makes the ladder feel earned instead of arbitrary.
+
+Every reveal also shows where the field landed on that question: the share you
+beat and the field's median, so a 560 on a question nobody could place reads as
+the win it is.
 
 ## What is real and what is not
 
 Real: the scoring and rank engines, the daily set selection with full
 repeat-protection cycling, one-attempt-per-day enforcement, answer immutability,
-persistence across restarts, the rank-drop schedule, local notifications, and
-every screen.
+persistence across restarts, the rank-drop schedule, local notifications, the
+unranked archive, and every screen.
+
+The archive is worth a note because of what it deliberately cannot do. Only days
+that have already been ranked are playable, so it can never hand out a practice
+run at questions you are about to be ranked on; and practice records live under
+their own key, so a run cannot touch RP, the streak, games played, or the ranked
+attempt. Both rules are enforced in `practiceService.ts`, which does not import
+the ranked services at all, and both are covered by tests that try to break
+them.
 
 Simulated: the opposition. `src/services/field.ts` generates the day's field
 from a per-day seed - its size, its score distribution and the RP it holds - so
@@ -94,13 +120,16 @@ screen says so in the app rather than implying otherwise.
 
 ## Verification
 
-- `npm test` - 137 tests over the pure layer and the services, including the
-  reversed-range case, the demotion shield, cycle-boundary repeat protection,
-  answer immutability, and idempotent rank drops.
+- `npm test` - 164 tests over the pure layer and the services, including the
+  reversed-range case, the demotion shield, the week-long repeat guarantee
+  across cycle seams, answer immutability, idempotent rank drops, and the
+  archive's refusal to touch rank or to serve today's set.
 - `npm run typecheck` - strict, with `noUncheckedIndexedAccess`.
 - The full flow has been driven end to end in a browser against the real web
-  bundle: start, seven locks with reveals, the day card, the rank drop, and all
-  four tabs, with no console errors.
+  bundle: onboarding, start, seven locks with reveals, the day card, the rank
+  drop, the archive, and all four tabs, with no console errors.
+- `.github/workflows/ci.yml` gates both on every pull request, and additionally
+  re-runs the icon generator to prove `assets/` still matches it.
 
 ## Next
 

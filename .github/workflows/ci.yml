@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded push has nothing useful left to say.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # The icons are generated rather than committed blobs, so a change to the
+      # generator that no longer reproduces them is a real failure.
+      - name: Assets reproduce from the generator
+        run: |
+          npm run assets
+          if ! git diff --quiet -- assets; then
+            echo "::error::assets/ does not match tools/generate-assets.mjs output"
+            git diff --stat -- assets
+            exit 1
+          fi

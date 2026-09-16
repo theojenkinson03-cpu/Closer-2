@@ -19,9 +19,14 @@ import { buildShareText } from "./src/core/share";
 import { rankLabel } from "./src/core/ranks";
 import { colors } from "./src/core/tokens";
 import { configureNotifications } from "./src/services/notifications";
+import { completeOnboarding, getPreferences, needsOnboarding } from "./src/services/preferences";
+import type { Preferences } from "./src/services/preferences";
+import { ArchiveScreen } from "./src/screens/ArchiveScreen";
 import { GameScreen } from "./src/screens/GameScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
+import { OnboardingScreen } from "./src/screens/OnboardingScreen";
 import { LeaderboardScreen } from "./src/screens/LeaderboardScreen";
+import { PracticeScreen } from "./src/screens/PracticeScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { RankDropScreen } from "./src/screens/RankDropScreen";
 import { StatsScreen } from "./src/screens/StatsScreen";
@@ -29,12 +34,14 @@ import { SubmittedScreen } from "./src/screens/SubmittedScreen";
 import { DailyProvider, useDailyState } from "./src/state/useDailyState";
 import { SessionProvider, useSession } from "./src/state/useSession";
 
-type Flow = "none" | "game" | "submitted" | "drop";
+type Flow = "none" | "game" | "submitted" | "drop" | "archive" | "practice";
 
-function Shell() {
+function Shell({ onReplayOnboarding }: { readonly onReplayOnboarding: () => void }) {
   const { phase, attempt, answers, rankResult, rankState, dateKey, start } = useDailyState();
+  const { userId } = useSession();
   const [tab, setTab] = useState<TabKey>("today");
   const [flow, setFlow] = useState<Flow>("none");
+  const [practiceDay, setPracticeDay] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     configureNotifications();
@@ -80,24 +87,46 @@ function Shell() {
     if (flow === "drop") {
       return <RankDropScreen onShare={share} onDone={() => setFlow("none")} />;
     }
+    if (flow === "archive") {
+      return (
+        <ArchiveScreen
+          onPlay={(key) => {
+            setPracticeDay(key);
+            setFlow("practice");
+          }}
+          onExit={() => setFlow("none")}
+        />
+      );
+    }
+    if (flow === "practice" && userId && practiceDay) {
+      return (
+        <PracticeScreen
+          userId={userId}
+          dateKey={practiceDay}
+          todayKey={dateKey}
+          onExit={() => setFlow("archive")}
+        />
+      );
+    }
     switch (tab) {
       case "board":
         return <LeaderboardScreen />;
       case "stats":
-        return <StatsScreen />;
+        return <StatsScreen onOpenArchive={() => setFlow("archive")} />;
       case "profile":
-        return <ProfileScreen />;
+        return <ProfileScreen onReplayOnboarding={onReplayOnboarding} />;
       case "today":
       default:
         return (
           <HomeScreen
             onPlay={() => void play()}
             onOpenDrop={() => setFlow("drop")}
+            onOpenArchive={() => setFlow("archive")}
             onShare={share}
           />
         );
     }
-  }, [flow, play, share, tab]);
+  }, [dateKey, flow, onReplayOnboarding, play, practiceDay, share, tab, userId]);
 
   return (
     <View style={styles.root}>
@@ -113,11 +142,41 @@ function Shell() {
   );
 }
 
-function WithSession() {
+/**
+ * Boot gate.
+ *
+ * Two things have to resolve from storage before the app can show anything
+ * truthful: who the player is, and whether they have been taught the rules.
+ * Until both land this renders the ground colour rather than a spinner, so the
+ * hand-off from the splash screen is seamless.
+ */
+function Gate() {
   const { userId, ready } = useSession();
+  const [preferences, setPrefs] = useState<Preferences | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPreferences().then((resolved) => {
+      if (!cancelled) setPrefs(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const finishOnboarding = useCallback(async () => {
+    setPrefs(await completeOnboarding());
+  }, []);
+
+  if (!ready || !preferences) return <View style={styles.root} />;
+
+  if (needsOnboarding(preferences)) {
+    return <OnboardingScreen onDone={() => void finishOnboarding()} />;
+  }
+
   return (
     <DailyProvider userId={userId}>
-      {ready ? <Shell /> : <View style={styles.root} />}
+      <Shell onReplayOnboarding={() => setPrefs({ ...preferences, onboardingSeen: 0 })} />
     </DailyProvider>
   );
 }
@@ -128,7 +187,7 @@ export default function App() {
       <StatusBar barStyle="light-content" backgroundColor={colors.backgroundDeep} />
       <PhoneOrFull>
         <SessionProvider>
-          <WithSession />
+          <Gate />
         </SessionProvider>
       </PhoneOrFull>
     </SafeAreaProvider>

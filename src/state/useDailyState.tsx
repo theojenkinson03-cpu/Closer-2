@@ -29,6 +29,7 @@ import { AppState } from "react-native";
 import { dateKeyFor, isConsecutiveDay } from "../core/dates";
 import type { AnswerRecord, Attempt, DailySet, Question, RankResult, RankState } from "../types";
 import { getAttempt, lockAnswer, setAttemptStatus, startAttempt } from "../services/attemptService";
+import type { QuestionFieldStats } from "../services/field";
 import { getDailySet } from "../services/dailyService";
 import { getRankState, isRankDropReady, markRankSeen, processRankDrop } from "../services/rankService";
 import { requestPermission, scheduleRankDrop } from "../services/notifications";
@@ -42,6 +43,12 @@ export type DailyPhase =
   | "RANK_READY"
   | "RANK_SEEN";
 
+/** An answer plus the field context revealed with it. */
+export interface RevealedAnswer {
+  readonly answer: AnswerRecord;
+  readonly field: QuestionFieldStats;
+}
+
 interface DailyValue {
   readonly phase: DailyPhase;
   readonly dateKey: string;
@@ -51,11 +58,11 @@ interface DailyValue {
   readonly rankResult: RankResult | undefined;
   readonly question: Question | undefined;
   readonly answers: readonly AnswerRecord[];
-  readonly lastAnswer: AnswerRecord | undefined;
+  readonly lastAnswer: RevealedAnswer | undefined;
   readonly busy: boolean;
   readonly error: string | undefined;
   readonly start: () => Promise<void>;
-  readonly lock: (value: number) => Promise<AnswerRecord | undefined>;
+  readonly lock: (value: number) => Promise<RevealedAnswer | undefined>;
   readonly acknowledgeSubmission: () => Promise<void>;
   readonly openRankDrop: () => Promise<RankResult | undefined>;
   readonly seeRank: () => Promise<void>;
@@ -97,7 +104,7 @@ export function DailyProvider({
   const [phase, setPhase] = useState<DailyPhase>("LOADING");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
-  const lastAnswer = useRef<AnswerRecord | undefined>(undefined);
+  const lastAnswer = useRef<RevealedAnswer | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
@@ -176,7 +183,8 @@ export function DailyProvider({
       setBusy(true);
       try {
         const outcome = await lockAnswer(userId, dateKey, question.id, value);
-        lastAnswer.current = outcome.answer;
+        const revealed: RevealedAnswer = { answer: outcome.answer, field: outcome.field };
+        lastAnswer.current = revealed;
         setAttempt(outcome.attempt);
         setError(undefined);
         if (outcome.completed) {
@@ -187,7 +195,7 @@ export function DailyProvider({
             if (permission === "granted") void scheduleRankDrop(dateKey);
           });
         }
-        return outcome.answer;
+        return revealed;
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Could not lock that answer.");
         return undefined;

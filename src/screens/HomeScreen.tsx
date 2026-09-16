@@ -27,10 +27,11 @@ import { useDailyState } from "../state/useDailyState";
 export interface HomeScreenProps {
   readonly onPlay: () => void;
   readonly onOpenDrop: () => void;
+  readonly onOpenArchive: () => void;
   readonly onShare: () => void;
 }
 
-export function HomeScreen({ onPlay, onOpenDrop, onShare }: HomeScreenProps) {
+export function HomeScreen({ onPlay, onOpenDrop, onOpenArchive, onShare }: HomeScreenProps) {
   const { phase, dateKey, attempt, rankState, rankResult, answers, busy } = useDailyState();
   const answered = answers.length;
 
@@ -119,6 +120,17 @@ export function HomeScreen({ onPlay, onOpenDrop, onShare }: HomeScreenProps) {
         </Card>
       ) : null}
 
+      {phase !== "NOT_STARTED" && phase !== "IN_PROGRESS" && phase !== "LOADING" ? (
+        <Card title="While you wait" style={styles.archiveCard}>
+          <Text variant="heading">The archive</Text>
+          <Text tone="muted">
+            Every set that has already been ranked is open to replay, unranked. The only way to get
+            better at estimating is to estimate more.
+          </Text>
+          <Button label="Open the archive" variant="secondary" onPress={onOpenArchive} />
+        </Card>
+      ) : null}
+
       {phase === "RANK_SEEN" && rankResult ? (
         <Card title="Today">
           <View style={styles.resultRow}>
@@ -157,4 +169,5 @@ const styles = StyleSheet.create({
   rankRow: { flexDirection: "row", alignItems: "center", gap: space.lg },
   rankMeta: { flex: 1, gap: space.sm },
   resultRow: { flexDirection: "row", justifyContent: "space-between" },
+  archiveCard: { marginTop: space.lg },
 });

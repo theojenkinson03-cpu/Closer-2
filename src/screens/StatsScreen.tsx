@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 
+import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { ExactnessDistribution, ScoreBar, Sparkline } from "../components/Charts";
 import { Screen } from "../components/Screen";
@@ -23,7 +24,7 @@ import { useDailyState } from "../state/useDailyState";
 import { useSession } from "../state/useSession";
 import type { PlayerStats } from "../types";
 
-export function StatsScreen() {
+export function StatsScreen({ onOpenArchive }: { readonly onOpenArchive: () => void }) {
   const { userId } = useSession();
   const { dateKey, phase } = useDailyState();
   const [stats, setStats] = useState<PlayerStats | undefined>(undefined);
@@ -136,6 +137,7 @@ export function StatsScreen() {
           ) : (
             <Text tone="muted">Your first rank drop will show up here.</Text>
           )}
+          <Button label="Replay a past set" variant="secondary" onPress={onOpenArchive} />
         </Card>
       </Screen>
     </ScrollView>

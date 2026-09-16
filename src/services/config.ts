@@ -31,6 +31,9 @@ export const FIELD_SAMPLE_SIZE = 96;
 /** Synthetic scores drawn to place a player inside the field. */
 export const FIELD_PLACEMENT_SAMPLES = 1200;
 
+/** Synthetic answers drawn to describe the field on a single question. */
+export const QUESTION_SAMPLES = 400;
+
 let latencyEnabled = true;
 
 /** Tests run against the same services and should not pay the fake latency. */

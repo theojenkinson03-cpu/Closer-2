@@ -6,13 +6,13 @@
  * it is the thing that makes the rank drop an event.
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Countdown } from "../components/Countdown";
-import { DailyTotalBar, ScoreBar } from "../components/Charts";
+import { DailyTotalBar, FieldComparison } from "../components/Charts";
 import { ExactnessPill } from "../components/ExactnessPill";
 import { Screen } from "../components/Screen";
 import { Text } from "../components/Text";
@@ -20,6 +20,8 @@ import { longDayLabel, rankDropAtFor } from "../core/dates";
 import { exactnessTrace, formatMiss, formatScore, formatUnitValue } from "../core/formatting";
 import { MAX_DAILY_SCORE } from "../core/scoring";
 import { space } from "../core/tokens";
+import { getAnswerContext } from "../services/attemptService";
+import type { QuestionFieldStats } from "../services/field";
 import { useDailyState } from "../state/useDailyState";
 
 export interface SubmittedScreenProps {
@@ -31,6 +33,25 @@ export function SubmittedScreen({ onShare, onDone }: SubmittedScreenProps) {
   const { attempt, set, dateKey, answers, phase, acknowledgeSubmission, openRankDrop, busy } =
     useDailyState();
   const total = attempt?.totalScore ?? 0;
+  const [context, setContext] = useState<Record<string, QuestionFieldStats>>({});
+
+  // The card reviews answers locked earlier, which never had a reveal of their
+  // own, so their field context is fetched here rather than remembered.
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      answers.map(async (answer) => {
+        const stats = await getAnswerContext(dateKey, answer.questionId, answer.score);
+        return stats ? ([answer.questionId, stats] as const) : undefined;
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setContext(Object.fromEntries(entries.filter((entry) => entry !== undefined)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [answers, dateKey]);
 
   return (
     <Screen scroll>
@@ -66,10 +87,16 @@ export function SubmittedScreen({ onShare, onDone }: SubmittedScreenProps) {
                   {`You ${formatUnitValue(answer.value, unit)} · Answer ${formatUnitValue(answer.answer, unit)}`}
                 </Text>
                 <Text variant="caption" tone="faint">
-                  {formatMiss(answer.delta, unit)}
+                  {`${formatMiss(answer.delta, unit)} \u00B7 ${formatScore(answer.score)} pts`}
                 </Text>
               </View>
-              <ScoreBar score={answer.score} label={`${answer.score >= 1000 ? "max" : "points"}`} />
+              {context[answer.questionId] ? (
+                <FieldComparison
+                  beatenShare={context[answer.questionId]!.beatenShare}
+                  medianScore={context[answer.questionId]!.medianScore}
+                  score={answer.score}
+                />
+              ) : null}
             </View>
           );
         })}

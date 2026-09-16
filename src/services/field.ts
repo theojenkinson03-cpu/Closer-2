@@ -11,10 +11,13 @@
  */
 
 import { createRandom, gaussian, randomInt, shuffle } from "../core/random";
-import { MAX_DAILY_SCORE } from "../core/scoring";
+import { clamp, EXACTNESS_THRESHOLDS, MAX_DAILY_SCORE, scoreForNormalisedError } from "../core/scoring";
 import { percentileFromPlacement } from "../core/ranks";
-import { clamp } from "../core/scoring";
-import { FIELD_PLACEMENT_SAMPLES, FIELD_SAMPLE_SIZE, FIELD_SIZE } from "./config";
+import type { Question } from "../types";
+import { FIELD_PLACEMENT_SAMPLES, FIELD_SAMPLE_SIZE, FIELD_SIZE, QUESTION_SAMPLES } from "./config";
+
+/** Upper bound of normalised error that still counts as a bullseye. */
+const BULLSEYE_ERROR = EXACTNESS_THRESHOLDS[0]![1];
 
 const FIRST_NAMES = [
   "Ari", "Bo", "Cass", "Dara", "Eli", "Fen", "Gus", "Hana", "Ike", "Jo",
@@ -142,4 +145,60 @@ export function topScoresFor(dateKey: string, count: number): number[] {
     scores.push(Math.round(ceiling));
   }
   return scores;
+}
+
+/** How the field did on a single question. */
+export interface QuestionFieldStats {
+  /** 0 - 1 share of the field this answer beat. */
+  readonly beatenShare: number;
+  /** The field's middle score on this question. */
+  readonly medianScore: number;
+  /** 0 - 1 share of the field that landed a bullseye. */
+  readonly bullseyeShare: number;
+}
+
+/**
+ * The spread of guesses a question provokes, as a normalised error deviation.
+ *
+ * Difficulty is the dial: an easy question concentrates the field near the
+ * answer, a hard one scatters it. Modelling the spread rather than the score
+ * directly means the curve stays consistent with the scoring function - the
+ * same exponential maps both the player and the field.
+ */
+function errorDeviationFor(difficulty: number): number {
+  return 0.02 + clamp(difficulty, 1, 5) * 0.035;
+}
+
+/**
+ * DEMO_DATA: derived from a per-question seed. A real implementation reads the
+ * same three numbers out of an aggregate over the day's answers, which is why
+ * they are returned together rather than computed one at a time.
+ */
+export function questionFieldStats(
+  dateKey: string,
+  question: Pick<Question, "id" | "difficulty">,
+  score: number,
+): QuestionFieldStats {
+  const random = createRandom(`question:${dateKey}:${question.id}`);
+  const deviation = errorDeviationFor(question.difficulty);
+
+  const scores: number[] = [];
+  for (let i = 0; i < QUESTION_SAMPLES; i += 1) {
+    // Error is a magnitude, so the draw is folded rather than signed.
+    const error = clamp(Math.abs(gaussian(random, 0, deviation)), 0, 1);
+    scores.push(scoreForNormalisedError(error));
+  }
+  scores.sort((a, b) => a - b);
+
+  const below = scores.filter((sample) => sample < score).length;
+  const middle = scores[Math.floor(scores.length / 2)] ?? 0;
+  const bullseyes = scores.filter(
+    (sample) => sample >= scoreForNormalisedError(BULLSEYE_ERROR),
+  ).length;
+
+  return {
+    beatenShare: clamp(below / Math.max(1, scores.length), 0, 1),
+    medianScore: middle,
+    bullseyeShare: clamp(bullseyes / Math.max(1, scores.length), 0, 1),
+  };
 }

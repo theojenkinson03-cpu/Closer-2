@@ -19,6 +19,8 @@ import { dateKeyFor } from "../core/dates";
 import type { Attempt, AnswerRecord, AttemptStatus, Question } from "../types";
 import { buildDailySet } from "./dailyService";
 import { simulateLatency } from "./config";
+import { questionFieldStats } from "./field";
+import type { QuestionFieldStats } from "./field";
 import { readJson, writeJson } from "./storage";
 
 export type AttemptErrorCode =
@@ -105,6 +107,8 @@ export async function startAttempt(userId: string, dateKey: string = dateKeyFor(
 export interface LockAnswerResult {
   readonly attempt: Attempt;
   readonly answer: AnswerRecord;
+  /** How the rest of the field handled the same question. */
+  readonly field: QuestionFieldStats;
   /** True when this answer completed the set. */
   readonly completed: boolean;
 }
@@ -165,7 +169,12 @@ export async function lockAnswer(
 
   const store = await load(userId);
   await persist(userId, { ...store, [dateKey]: updated });
-  return { attempt: updated, answer, completed };
+  return {
+    attempt: updated,
+    answer,
+    field: questionFieldStats(dateKey, question, breakdown.score),
+    completed,
+  };
 }
 
 /** Move an attempt along the rank pipeline. Called by the rank service. */
@@ -185,4 +194,21 @@ export async function setAttemptStatus(
 /** Test and sign-out hook: drops the in-memory cache without touching disk. */
 export function clearAttemptCache(): void {
   cache.clear();
+}
+
+/**
+ * Field context for an answer already on record.
+ *
+ * DEMO_DATA: local. Real implementation: GET /daily/:dateKey/questions/:id/stats
+ * Used by the day card and the archive, which show answers the player locked
+ * earlier and so never saw a `lockAnswer` result for.
+ */
+export async function getAnswerContext(
+  dateKey: string,
+  questionId: string,
+  score: number,
+): Promise<QuestionFieldStats | undefined> {
+  const question = buildDailySet(dateKey).questions.find((entry) => entry.id === questionId);
+  if (!question) return undefined;
+  return questionFieldStats(dateKey, question, score);
 }

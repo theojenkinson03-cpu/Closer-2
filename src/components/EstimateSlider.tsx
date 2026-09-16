@@ -19,8 +19,8 @@
  *   thing limiting precision.
  */
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
-import { PanResponder, Pressable, StyleSheet, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PanResponder, Platform, Pressable, StyleSheet, View } from "react-native";
 
 import { clamp, decimalsForStep, snapToStep } from "../core/scoring";
 import { formatUnitValue, formatUnitValueCompact, MINUS } from "../core/formatting";
@@ -31,6 +31,13 @@ import { Text } from "./Text";
 const TRACK_HEIGHT = 56;
 const MARKER_WIDTH = 4;
 const TICK_COUNT = 41;
+
+/** Vertical distance from the track that switches a drag into fine mode. */
+const FINE_DRAG_THRESHOLD = 44;
+/** How much slower a fine drag travels. */
+const FINE_SENSITIVITY = 0.18;
+/** Steps moved by a shifted key press. */
+const COARSE_KEY_STEPS = 10;
 
 export interface EstimateSliderProps {
   readonly question: Pick<Question, "rangeStart" | "rangeEnd" | "step" | "unit">;
@@ -52,7 +59,10 @@ export function EstimateSlider({
 }: EstimateSliderProps) {
   const { rangeStart, rangeEnd, step, unit } = question;
   const [width, setWidth] = useState(0);
+  const [fineActive, setFineActive] = useState(false);
   const startFraction = useRef(0);
+  const anchorDx = useRef(0);
+  const fineMode = useRef(false);
   const lastEmitted = useRef(value);
 
   const fractionFor = useCallback(
@@ -87,10 +97,33 @@ export function EstimateSlider({
         onMoveShouldSetPanResponder: () => !disabled,
         onPanResponderGrant: () => {
           startFraction.current = fractionFor(value);
+          anchorDx.current = 0;
+          fineMode.current = false;
+          setFineActive(false);
         },
         onPanResponderMove: (_event, gesture) => {
           if (width <= 0) return;
-          emit(valueFor(startFraction.current + gesture.dx / width));
+
+          // Drag away from the track to slow the travel down. A 390px track
+          // cannot resolve one metre in five thousand, and the player - not the
+          // hardware - should decide how precise the answer is.
+          const wantsFine = Math.abs(gesture.dy) > FINE_DRAG_THRESHOLD;
+          if (wantsFine !== fineMode.current) {
+            // Re-anchor on the current value, or the marker jumps the moment
+            // sensitivity changes.
+            startFraction.current = fractionFor(value);
+            anchorDx.current = gesture.dx;
+            fineMode.current = wantsFine;
+            setFineActive(wantsFine);
+          }
+
+          const sensitivity = wantsFine ? FINE_SENSITIVITY : 1;
+          const travelled = (gesture.dx - anchorDx.current) * sensitivity;
+          emit(valueFor(startFraction.current + travelled / width));
+        },
+        onPanResponderRelease: () => {
+          fineMode.current = false;
+          setFineActive(false);
         },
         onPanResponderTerminationRequest: () => false,
       }),
@@ -100,17 +133,72 @@ export function EstimateSlider({
   const fraction = fractionFor(value);
   const answerFraction = answer === undefined ? undefined : fractionFor(answer);
   const decimals = decimalsForStep(step);
-  const nudge = (direction: 1 | -1) => {
-    if (disabled) return;
-    const raw = Number((value + direction * step * Math.sign(rangeEnd - rangeStart || 1)).toFixed(decimals));
-    emit(snapToStep(raw, rangeStart, rangeEnd, step));
-  };
+  /** Move by whole steps in the visual direction: positive is rightwards. */
+  const nudgeBy = useCallback(
+    (steps: number) => {
+      if (disabled || steps === 0) return;
+      const direction = Math.sign(rangeEnd - rangeStart) || 1;
+      const raw = Number((value + steps * step * direction).toFixed(decimals));
+      emit(snapToStep(raw, rangeStart, rangeEnd, step));
+    },
+    [decimals, disabled, emit, rangeEnd, rangeStart, step, value],
+  );
+
+  const nudge = (direction: 1 | -1) => nudgeBy(direction);
+
+  // Keyboard control. Real on web and on any tablet with a keyboard attached,
+  // and the only way to hit an exact value without a mouse.
+  useEffect(() => {
+    if (Platform.OS !== "web" || disabled) return;
+    const target = globalThis as { addEventListener?: typeof window.addEventListener; removeEventListener?: typeof window.removeEventListener };
+    if (!target.addEventListener) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Never steal keys from a field someone is typing in.
+      const node = event.target as { tagName?: string; isContentEditable?: boolean } | null;
+      const tag = node?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || node?.isContentEditable) return;
+
+      const multiplier = event.shiftKey ? COARSE_KEY_STEPS : 1;
+      switch (event.key) {
+        case "ArrowRight":
+        case "ArrowUp":
+          nudgeBy(multiplier);
+          break;
+        case "ArrowLeft":
+        case "ArrowDown":
+          nudgeBy(-multiplier);
+          break;
+        case "PageUp":
+          nudgeBy(COARSE_KEY_STEPS);
+          break;
+        case "PageDown":
+          nudgeBy(-COARSE_KEY_STEPS);
+          break;
+        case "Home":
+          emit(snapToStep(rangeStart, rangeStart, rangeEnd, step));
+          break;
+        case "End":
+          emit(snapToStep(rangeEnd, rangeStart, rangeEnd, step));
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+    };
+
+    target.addEventListener("keydown", onKeyDown as EventListener);
+    return () => target.removeEventListener?.("keydown", onKeyDown as EventListener);
+  }, [disabled, emit, nudgeBy, rangeEnd, rangeStart, step]);
 
   return (
     <View>
       <View style={styles.readout}>
         <Text variant="mono" align="center" accessibilityLiveRegion="polite">
           {formatUnitValue(value, unit)}
+        </Text>
+        <Text variant="caption" tone={fineActive ? "accent" : "faint"} uppercase align="center">
+          {fineActive ? "Fine" : " "}
         </Text>
       </View>
 
@@ -171,8 +259,8 @@ export function EstimateSlider({
       {disabled ? null : (
         <View style={styles.nudges}>
           <Nudge label="−" onPress={() => nudge(-1)} hint="Decrease by one step" />
-          <Text variant="caption" tone="faint" uppercase>
-            {`step ${formatUnitValue(step, unit)}`}
+          <Text variant="caption" tone="faint" uppercase align="center">
+            {`step ${formatUnitValue(step, { ...unit, grouped: true })}`}
           </Text>
           <Nudge label="+" onPress={() => nudge(1)} hint="Increase by one step" />
         </View>
@@ -203,7 +291,7 @@ function Nudge({
 }
 
 const styles = StyleSheet.create({
-  readout: { marginBottom: space.lg },
+  readout: { marginBottom: space.lg, gap: space.xs },
   track: {
     height: TRACK_HEIGHT,
     justifyContent: "center",

@@ -2,22 +2,47 @@ import { assert, equal, isTrue, suite, test, throwsAsync } from "./harness";
 import {
   AttemptError,
   clearAttemptCache,
+  getAnswerContext,
   getAttempt,
   listAttempts,
   lockAnswer,
   startAttempt,
 } from "../src/services/attemptService";
-import { buildDailySet, cycleLengthDays, selectQuestions } from "../src/services/dailyService";
+import {
+  buildDailySet,
+  cycleLengthDays,
+  SEAM_GUARD_DAYS,
+  seamGuardFor,
+  selectQuestions,
+} from "../src/services/dailyService";
 import { clearRankCache, getRankResult, getRankState, isRankDropReady, markRankSeen, processRankDrop } from "../src/services/rankService";
 import { getLeaderboard } from "../src/services/leaderboardService";
 import { computeStreaks, getPlayerStats } from "../src/services/statsService";
 import { QUESTIONS } from "../src/services/questionBank";
-import { placementFor, fieldSizeFor, sampleFieldRp } from "../src/services/field";
+import { placementFor, fieldSizeFor, questionFieldStats, sampleFieldRp } from "../src/services/field";
 import { createMemoryAdapter, setStorageAdapter, writeJson } from "../src/services/storage";
 import { setLatencyEnabled } from "../src/services/config";
+import {
+  clearPracticeCache,
+  getPracticeAttempt,
+  isArchiveAvailable,
+  listArchive,
+  lockPracticeAnswer,
+  PracticeError,
+  resetPractice,
+  startPractice,
+} from "../src/services/practiceService";
+import {
+  completeOnboarding,
+  DEFAULT_PREFERENCES,
+  getPreferences,
+  needsOnboarding,
+  ONBOARDING_VERSION,
+  setPreferences,
+} from "../src/services/preferences";
 import { QUESTIONS_PER_DAY } from "../src/core/scoring";
 import { formatUnitValue } from "../src/core/formatting";
-import { addDaysToKey, rankDropAtFor, seasonIdFor } from "../src/core/dates";
+import { addDaysToKey, daysBetweenKeys, rankDropAtFor, SEASON_EPOCH, seasonIdFor } from "../src/core/dates";
 
 setLatencyEnabled(false);
 
@@ -30,6 +55,7 @@ function reset(): void {
   setStorageAdapter(createMemoryAdapter());
   clearAttemptCache();
   clearRankCache();
+  clearPracticeCache();
 }
 
 /** Answer every question in a day's set, optionally perfectly. */
@@ -80,8 +106,11 @@ suite("question bank", () => {
     }
   });
 
-  test("the bank holds more than a week of content", () => {
-    assert(cycleLengthDays() >= 7, "a repeat inside the first week would be obvious");
+  test("the bank holds a month of content", () => {
+    assert(
+      cycleLengthDays() >= 28,
+      `only ${cycleLengthDays()} days of unique content; a month is the retention bar`,
+    );
   });
 });
 
@@ -103,24 +132,42 @@ suite("daily set", () => {
   });
 
   test("a full cycle never repeats a question", () => {
+    // Align to a cycle boundary: the no-repeat guarantee is per cycle, and an
+    // arbitrary window of the same length straddles two of them.
+    const cycleDays = cycleLengthDays();
+    const offset = ((daysBetweenKeys(SEASON_EPOCH, DAY) % cycleDays) + cycleDays) % cycleDays;
+    const start = addDaysToKey(DAY, -offset);
     const seen = new Set<string>();
-    for (let i = 0; i < cycleLengthDays(); i += 1) {
-      for (const question of selectQuestions(addDaysToKey(DAY, i))) {
+    for (let i = 0; i < cycleDays; i += 1) {
+      for (const question of selectQuestions(addDaysToKey(start, i))) {
         assert(!seen.has(question.id), `${question.id} repeated inside a cycle`);
         seen.add(question.id);
       }
     }
   });
 
-  test("the cycle seam does not echo the previous day", () => {
-    // Walk a full cycle and check every adjacent pair, including the wrap.
-    for (let i = 0; i <= cycleLengthDays(); i += 1) {
-      const key = addDaysToKey(DAY, i);
-      const previous = new Set(selectQuestions(addDaysToKey(key, -1)).map((q) => q.id));
-      for (const question of selectQuestions(key)) {
-        assert(!previous.has(question.id), `${question.id} repeated across the seam at ${key}`);
+  test("no question returns inside a week, seams included", () => {
+    // Long enough to cross two seams, which is where the guarantee is thinnest.
+    const lastSeen = new Map<string, number>();
+    const guard = seamGuardFor(cycleLengthDays());
+    for (let day = 0; day < cycleLengthDays() * 2 + 10; day += 1) {
+      for (const question of selectQuestions(addDaysToKey(DAY, day))) {
+        const previous = lastSeen.get(question.id);
+        if (previous !== undefined) {
+          assert(
+            day - previous > guard,
+            `${question.id} returned after ${day - previous} day(s), guard is ${guard}`,
+          );
+        }
+        lastSeen.set(question.id, day);
       }
     }
+  });
+
+  test("the guard shrinks rather than breaking on a short cycle", () => {
+    equal(seamGuardFor(33), SEAM_GUARD_DAYS);
+    equal(seamGuardFor(5), 2, "a five-day cycle cannot support a six-day guard");
+    equal(seamGuardFor(1), 0);
   });
 
   test("a set opens easy and ends hard", () => {
@@ -367,6 +414,218 @@ suite("field and leaderboard", () => {
     const board = await getLeaderboard(USER, DAY);
     equal(board.around.length, 0);
     equal(board.top.length, 10);
+  });
+});
+
+suite("preferences", () => {
+  test("a fresh install needs onboarding", async () => {
+    reset();
+    const preferences = await getPreferences();
+    equal(preferences.onboardingSeen, 0);
+    isTrue(needsOnboarding(preferences));
+  });
+
+  test("completing onboarding records the version", async () => {
+    reset();
+    const preferences = await completeOnboarding();
+    equal(preferences.onboardingSeen, ONBOARDING_VERSION);
+    equal(needsOnboarding(preferences), false);
+  });
+
+  test("onboarding shows again when the flow changes", async () => {
+    reset();
+    await completeOnboarding();
+    // A player who saw version 1 should see a materially changed version 2.
+    isTrue(needsOnboarding({ ...(await getPreferences()), onboardingSeen: ONBOARDING_VERSION - 1 }));
+  });
+
+  test("patches merge rather than replace", async () => {
+    reset();
+    await completeOnboarding();
+    await setPreferences({ sliderHintSeen: true });
+    const preferences = await getPreferences();
+    equal(preferences.onboardingSeen, ONBOARDING_VERSION, "the unrelated field survived");
+    equal(preferences.sliderHintSeen, true);
+  });
+
+  test("unknown stored fields fall back to defaults", async () => {
+    reset();
+    await writeJson("preferences", { sliderHintSeen: true });
+    equal((await getPreferences()).onboardingSeen, DEFAULT_PREFERENCES.onboardingSeen);
+  });
+});
+
+suite("per-question field", () => {
+  const easy = { id: "probe-easy", difficulty: 1 as const };
+  const hard = { id: "probe-hard", difficulty: 5 as const };
+
+  test("the same question and score always report the same field", () => {
+    const a = questionFieldStats(DAY, easy, 800);
+    const b = questionFieldStats(DAY, easy, 800);
+    equal(a.beatenShare, b.beatenShare);
+    equal(a.medianScore, b.medianScore);
+  });
+
+  test("a better score never beats less of the field", () => {
+    let previous = -1;
+    for (const score of [0, 200, 400, 600, 800, 1000]) {
+      const { beatenShare } = questionFieldStats(DAY, hard, score);
+      assert(beatenShare >= previous, `share fell at ${score}`);
+      previous = beatenShare;
+    }
+  });
+
+  test("a perfect answer beats nearly everyone and a floor answer almost nobody", () => {
+    assert(questionFieldStats(DAY, hard, 1000).beatenShare > 0.9);
+    assert(questionFieldStats(DAY, hard, 0).beatenShare < 0.05);
+  });
+
+  test("an easy question concentrates the field near the answer", () => {
+    assert(
+      questionFieldStats(DAY, easy, 500).medianScore > questionFieldStats(DAY, hard, 500).medianScore,
+      "the median should be higher on an easier question",
+    );
+    assert(
+      questionFieldStats(DAY, easy, 500).bullseyeShare >= questionFieldStats(DAY, hard, 500).bullseyeShare,
+    );
+  });
+
+  test("shares stay inside zero and one", () => {
+    for (const difficulty of [1, 2, 3, 4, 5] as const) {
+      const stats = questionFieldStats(DAY, { id: `d${difficulty}`, difficulty }, 700);
+      assert(stats.beatenShare >= 0 && stats.beatenShare <= 1);
+      assert(stats.bullseyeShare >= 0 && stats.bullseyeShare <= 1);
+      assert(stats.medianScore >= 0 && stats.medianScore <= 1000);
+    }
+  });
+
+  test("locking an answer reports the field with it", async () => {
+    reset();
+    const question = buildDailySet(DAY).questions[0]!;
+    const { field } = await lockAnswer(USER, DAY, question.id, question.answer);
+    assert(field.beatenShare > 0.9, "a bullseye should beat the field");
+  });
+
+  test("context is available for an answer already on record", async () => {
+    const question = buildDailySet(DAY).questions[2]!;
+    const stats = await getAnswerContext(DAY, question.id, 1000);
+    assert(stats !== undefined);
+    equal(await getAnswerContext(DAY, "not-a-question", 500), undefined);
+  });
+});
+
+suite("archive", () => {
+  const YESTERDAY = addDaysToKey(DAY, -1);
+
+  async function playPractice(dateKey: string, perfect = false): Promise<void> {
+    for (const question of buildDailySet(dateKey).questions) {
+      await lockPracticeAnswer(USER, dateKey, question.id, perfect ? question.answer : question.rangeStart, DAY);
+    }
+  }
+
+  test("only past days are playable", () => {
+    isTrue(isArchiveAvailable(YESTERDAY, DAY));
+    equal(isArchiveAvailable(DAY, DAY), false, "today is ranked, not practice");
+    equal(isArchiveAvailable(addDaysToKey(DAY, 1), DAY), false);
+    equal(isArchiveAvailable("2020-01-01", DAY), false, "before ranked play began");
+  });
+
+  test("today cannot be practised, even by a direct call", async () => {
+    reset();
+    await throwsAsync(
+      () => startPractice(USER, DAY, DAY),
+      (error) => error instanceof PracticeError && error.code === "NOT_PAST_DAY",
+    );
+    const question = buildDailySet(DAY).questions[0]!;
+    await throwsAsync(
+      () => lockPracticeAnswer(USER, DAY, question.id, 1, DAY),
+      (error) => error instanceof PracticeError && error.code === "NOT_PAST_DAY",
+    );
+  });
+
+  test("practice is scored by the same engine as ranked play", async () => {
+    reset();
+    const question = buildDailySet(YESTERDAY).questions[0]!;
+    const { answer } = await lockPracticeAnswer(USER, YESTERDAY, question.id, question.answer, DAY);
+    equal(answer.score, 1000);
+    equal(answer.exactness, "BULLSEYE");
+  });
+
+  test("practice never touches rank, streak or the ranked attempt", async () => {
+    reset();
+    const before = await getRankState(USER, DAY);
+    await playPractice(YESTERDAY, true);
+
+    const after = await getRankState(USER, DAY);
+    equal(after.rp, before.rp, "rp moved");
+    equal(after.gamesPlayed, before.gamesPlayed, "games played moved");
+    equal(after.streak, before.streak, "streak moved");
+    equal(await getAttempt(USER, YESTERDAY), undefined, "a ranked attempt was created");
+    equal((await getPlayerStats(USER, DAY)).gamesPlayed, 0, "practice counted as a game");
+  });
+
+  test("practice keeps its order and completes", async () => {
+    reset();
+    const set = buildDailySet(YESTERDAY);
+    await throwsAsync(
+      () => lockPracticeAnswer(USER, YESTERDAY, set.questions[4]!.id, 0, DAY),
+      (error) => error instanceof PracticeError && error.code === "OUT_OF_ORDER",
+    );
+    await playPractice(YESTERDAY, true);
+    const attempt = await getPracticeAttempt(USER, YESTERDAY);
+    equal(attempt?.answers.length, QUESTIONS_PER_DAY);
+    equal(attempt?.totalScore, 7000);
+    assert(Boolean(attempt?.completedAt));
+  });
+
+  test("a finished day is closed until it is reset", async () => {
+    reset();
+    await playPractice(YESTERDAY, true);
+    const question = buildDailySet(YESTERDAY).questions[0]!;
+    await throwsAsync(
+      () => lockPracticeAnswer(USER, YESTERDAY, question.id, 1, DAY),
+      (error) => error instanceof PracticeError && error.code === "ALREADY_COMPLETE",
+    );
+
+    await resetPractice(USER, YESTERDAY);
+    equal(await getPracticeAttempt(USER, YESTERDAY), undefined);
+    const { answer } = await lockPracticeAnswer(USER, YESTERDAY, question.id, question.answer, DAY);
+    equal(answer.score, 1000, "the day is playable again");
+  });
+
+  test("practice survives a restart", async () => {
+    reset();
+    const set = buildDailySet(YESTERDAY);
+    await lockPracticeAnswer(USER, YESTERDAY, set.questions[0]!.id, set.questions[0]!.answer, DAY);
+    clearPracticeCache();
+    const restored = await getPracticeAttempt(USER, YESTERDAY);
+    equal(restored?.answers.length, 1);
+  });
+
+  test("the archive lists past days with both scores", async () => {
+    reset();
+    await playPractice(YESTERDAY, true);
+    const entries = await listArchive(USER, new Map([[YESTERDAY, 4812]]), DAY, 5);
+    equal(entries.length, 5);
+    equal(entries[0]?.dateKey, YESTERDAY, "newest first");
+    equal(entries[0]?.rankedScore, 4812);
+    equal(entries[0]?.practiceScore, 7000);
+    equal(entries[1]?.practiceScore, undefined);
+  });
+
+  test("the archive never lists today or the future", async () => {
+    reset();
+    const entries = await listArchive(USER, new Map(), DAY, 10);
+    for (const entry of entries) isTrue(isArchiveAvailable(entry.dateKey, DAY));
+  });
+
+  test("a part-finished day is flagged in progress", async () => {
+    reset();
+    const set = buildDailySet(YESTERDAY);
+    await lockPracticeAnswer(USER, YESTERDAY, set.questions[0]!.id, 0, DAY);
+    const entries = await listArchive(USER, new Map(), DAY, 3);
+    isTrue(entries[0]!.inProgress);
+    equal(entries[0]!.practiceScore, undefined);
   });
 });
 

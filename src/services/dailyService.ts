@@ -7,9 +7,15 @@
  *
  * Repeat protection works by cycling. The bank is shuffled once per cycle and
  * dealt seven at a time, so a question cannot reappear until the entire bank
- * has been used. The shuffle is re-seeded each cycle so the same seven never
- * travel together twice, and the first day of a cycle additionally avoids
- * anything served on the last day of the previous one.
+ * has been used. The shuffle is re-seeded each cycle, so the same seven never
+ * travel together twice.
+ *
+ * Cycling alone leaves one hole: the seam. A question served on the last day of
+ * one cycle is free to return on the first day of the next, and the days either
+ * side of a seam are adjacent in a player's experience even though they sit in
+ * different cycles. So the first `SEAM_GUARD_DAYS` days of a cycle exclude
+ * everything served in the last `SEAM_GUARD_DAYS` days of the previous one,
+ * which lifts the guarantee to: no question returns within a week.
  */
 
 import { createRandom, shuffle } from "../core/random";
@@ -45,15 +51,33 @@ function sliceForDay(order: readonly Question[], dayInCycle: number): Question[]
 }
 
 
+/** Days of separation guaranteed across a cycle seam. */
+export const SEAM_GUARD_DAYS = 6;
+
+/**
+ * The guard a given cycle length can actually support.
+ *
+ * The repair needs a middle region to draw swaps from, and that region has to
+ * sit clear of both guard bands, so a short cycle gets a proportionally
+ * smaller guard rather than a broken one.
+ */
+export function seamGuardFor(cycleDays: number): number {
+  return Math.max(0, Math.min(SEAM_GUARD_DAYS, Math.floor((cycleDays - 1) / 2)));
+}
+
 /**
  * Bridge the seam between cycles.
  *
- * Day one of a cycle would otherwise be free to repeat what was served on the
- * last day of the previous one. The fix is a swap *inside* the cycle rather
- * than a substitution, so the cycle stays a partition of the bank and nothing
- * can appear twice. Candidates are drawn only from the middle of the cycle -
- * never the first or last day - which keeps the previous cycle's final day
- * stable and stops the repair from chaining backwards for ever.
+ * The opening days of a cycle would otherwise be free to repeat what the
+ * closing days of the previous one served. The fix is a swap *inside* the
+ * cycle rather than a substitution, so the cycle stays a partition of the bank
+ * and nothing can appear twice within it.
+ *
+ * Swap candidates come only from the middle of the cycle, never from either
+ * guard band. That matters for more than tidiness: it leaves the closing days
+ * of every cycle untouched by that cycle's own repair, so the previous cycle's
+ * tail can be read straight from its unrepaired order and the repair does not
+ * chain backwards through every cycle that came before it.
  */
 function repairSeam(
   order: readonly Question[],
@@ -62,21 +86,25 @@ function repairSeam(
   bank: readonly Question[],
 ): Question[] {
   const repaired = order.slice();
-  if (cycleDays < 3) return repaired;
+  const guard = seamGuardFor(cycleDays);
+  if (guard === 0) return repaired;
 
-  const previousLastDay = sliceForDay(orderForCycle(cycleIndex - 1, bank), cycleDays - 1);
-  const blocked = new Set(previousLastDay.map((question) => question.id));
+  const previous = orderForCycle(cycleIndex - 1, bank);
+  const blocked = new Set<string>();
+  for (let day = cycleDays - guard; day < cycleDays; day += 1) {
+    for (const question of sliceForDay(previous, day)) blocked.add(question.id);
+  }
 
-  const firstMiddle = QUESTIONS_PER_DAY;
-  const lastMiddle = (cycleDays - 1) * QUESTIONS_PER_DAY - 1;
+  const guardEnd = guard * QUESTIONS_PER_DAY;
+  const middleEnd = (cycleDays - guard) * QUESTIONS_PER_DAY;
 
-  for (let i = 0; i < QUESTIONS_PER_DAY; i += 1) {
+  for (let i = 0; i < guardEnd; i += 1) {
     if (!blocked.has(repaired[i]!.id)) continue;
-    for (let j = firstMiddle; j <= lastMiddle; j += 1) {
+    for (let j = guardEnd; j < middleEnd; j += 1) {
       if (blocked.has(repaired[j]!.id)) continue;
-      const a = repaired[i]!;
+      const displaced = repaired[i]!;
       repaired[i] = repaired[j]!;
-      repaired[j] = a;
+      repaired[j] = displaced;
       break;
     }
   }

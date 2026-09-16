@@ -54,13 +54,21 @@ this.
 
 The bank is shuffled once per cycle and dealt seven a day, so no question can
 reappear until the entire bank has been used. The shuffle is re-seeded each
-cycle, so the same seven never travel together twice, and the first day of a
-cycle additionally avoids anything served on the last day of the previous one.
+cycle, so the same seven never travel together twice.
+
+Cycling alone leaves one hole: a question served on the last day of a cycle
+would be free to return on the first day of the next, and those two days are
+adjacent to a player even though they sit in different cycles. So the first six
+days of a cycle exclude everything served in the last six days of the previous
+one, which lifts the guarantee to: no question returns inside a week. There is a
+test that walks two full cycles and checks it.
+
 Selection is a pure function of the date key, so every player worldwide gets
-byte-identical questions and any past day can be rebuilt exactly.
+byte-identical questions and any past day can be rebuilt exactly - which is also
+what makes the unranked archive possible.
 
 Adding questions lengthens the cycle automatically: `cycleLengthDays()` is
-`floor(bankSize / 7)`. At 77 questions that is 11 days.
+`floor(bankSize / 7)`. At 233 questions that is 33 days.
 
 Each day is sorted easiest-first, so a set opens with something a player can
 land and closes with one that separates the field.
@@ -68,7 +76,8 @@ land and closes with one that separates the field.
 ## Before committing a batch
 
 ```bash
-npm test        # range containment, step resolution, sources, cycle integrity
+npm test        # range containment, step resolution, sources, cycle integrity,
+                # the week-long repeat guarantee, and year formatting
 npm run typecheck
 ```
 

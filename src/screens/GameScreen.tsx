@@ -15,17 +15,17 @@ import { StyleSheet, View } from "react-native";
 
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
+import { AnswerReveal } from "../components/AnswerReveal";
 import { EstimateSlider } from "../components/EstimateSlider";
-import { ExactnessPill } from "../components/ExactnessPill";
 import { ProgressDots } from "../components/ProgressDots";
 import { Screen } from "../components/Screen";
 import { Text } from "../components/Text";
-import { formatMiss, formatScore, formatUnitValue } from "../core/formatting";
+import { formatScore } from "../core/formatting";
 import { QUESTIONS_PER_DAY, snapToStep } from "../core/scoring";
 import { space } from "../core/tokens";
 import { useDailyState } from "../state/useDailyState";
-import { impact, selection } from "../services/haptics";
-import type { AnswerRecord } from "../types";
+import type { RevealedAnswer } from "../state/useDailyState";
+import { celebrate, impact, selection } from "../services/haptics";
 
 export interface GameScreenProps {
   readonly onFinished: () => void;
@@ -33,8 +33,8 @@ export interface GameScreenProps {
 }
 
 export function GameScreen({ onFinished, onExit }: GameScreenProps) {
-  const { question, answers, attempt, lock, busy, error } = useDailyState();
-  const [revealed, setRevealed] = useState<AnswerRecord | undefined>(undefined);
+  const { question, answers, attempt, set, lock, busy, error } = useDailyState();
+  const [revealed, setRevealed] = useState<RevealedAnswer | undefined>(undefined);
   const [value, setValue] = useState(0);
 
   // The slider opens at the midpoint of the range: a neutral starting position
@@ -68,8 +68,11 @@ export function GameScreen({ onFinished, onExit }: GameScreenProps) {
 
   const onLock = async () => {
     impact();
-    const answer = await lock(value);
-    if (answer) setRevealed(answer);
+    const outcome = await lock(value);
+    if (!outcome) return;
+    // A bullseye is rare enough to be worth its own note.
+    if (outcome.answer.exactness === "BULLSEYE") celebrate();
+    setRevealed(outcome);
   };
 
   const onNext = () => {
@@ -92,7 +95,13 @@ export function GameScreen({ onFinished, onExit }: GameScreenProps) {
       </View>
 
       {revealed ? (
-        <RevealCard answer={revealed} onNext={onNext} isFinal={answers.length >= QUESTIONS_PER_DAY} />
+        <AnswerReveal
+          question={set?.questions.find((entry) => entry.id === revealed.answer.questionId)}
+          answer={revealed.answer}
+          field={revealed.field}
+          onNext={onNext}
+          nextLabel={answers.length >= QUESTIONS_PER_DAY ? "Finish" : "Next question"}
+        />
       ) : question ? (
         <>
           <Card style={styles.prompt}>
@@ -141,77 +150,10 @@ export function GameScreen({ onFinished, onExit }: GameScreenProps) {
   );
 }
 
-function RevealCard({
-  answer,
-  onNext,
-  isFinal,
-}: {
-  readonly answer: AnswerRecord;
-  readonly onNext: () => void;
-  readonly isFinal: boolean;
-}) {
-  const { set } = useDailyState();
-  // The question that was just answered, not the one the set has moved on to.
-  const answered = set?.questions.find((entry) => entry.id === answer.questionId);
-  const unit = answered?.unit ?? { label: "", placement: "suffix" as const, decimals: 0 };
-
-  return (
-    <Card style={styles.reveal}>
-      <ExactnessPill exactness={answer.exactness} score={answer.score} />
-
-      {answered ? (
-        <Text variant="body" tone="muted">
-          {answered.prompt}
-        </Text>
-      ) : null}
-
-      {/* The same track the guess was made on, with the truth drawn on it.
-          Seeing the two marks a few pixels apart says more about a near miss
-          than any number can. */}
-      {answered ? (
-        <EstimateSlider
-          question={answered}
-          value={answer.value}
-          onChange={() => undefined}
-          answer={answer.answer}
-          disabled
-        />
-      ) : null}
-
-      <View style={styles.revealRow}>
-        <View style={styles.revealCell}>
-          <Text variant="caption" tone="faint" uppercase>
-            You said
-          </Text>
-          <Text variant="heading">{formatUnitValue(answer.value, unit)}</Text>
-        </View>
-        <View style={styles.revealCell}>
-          <Text variant="caption" tone="faint" uppercase>
-            Answer
-          </Text>
-          <Text variant="heading" tone="accent">
-            {formatUnitValue(answer.answer, unit)}
-          </Text>
-        </View>
-      </View>
-      <Text tone="muted">{formatMiss(answer.delta, unit)}</Text>
-      {answered ? (
-        <Text variant="caption" tone="faint">
-          {`Source: ${answered.source}`}
-        </Text>
-      ) : null}
-      <Button label={isFinal ? "Finish" : "Next question"} onPress={onNext} />
-    </Card>
-  );
-}
-
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", gap: space.lg },
   header: { gap: space.md, marginBottom: space.xl },
   prompt: { marginBottom: space.xl },
   sliderBlock: { marginBottom: space.xxl },
-  reveal: { gap: space.lg },
-  revealRow: { flexDirection: "row", justifyContent: "space-between" },
-  revealCell: { gap: space.xs },
   banked: { marginTop: space.lg },
 });
